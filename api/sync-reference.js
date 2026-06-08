@@ -235,6 +235,8 @@ module.exports = async function handler(req, res) {
       req.body.data?.id;
 
     if (!pageId) {
+      console.log("NO PAGE ID BODY:", JSON.stringify(req.body, null, 2));
+
       return res.status(200).json({
         ok: false,
         error: "pageId 없음",
@@ -246,11 +248,14 @@ module.exports = async function handler(req, res) {
     const status = page.properties[CONTENT_STATUS_PROP]?.status?.name;
 
     if (status !== "레퍼런스 등록") {
-      return res.status(200).json({
+      const result = {
         ok: true,
         skipped: true,
         reason: `현재 상태: ${status}`,
-      });
+      };
+
+      console.log("RESULT:", result);
+      return res.status(200).json(result);
     }
 
     const pageTitle = getTitle(page);
@@ -305,7 +310,7 @@ module.exports = async function handler(req, res) {
       created++;
     }
 
-    return res.status(200).json({
+    const result = {
       ok: true,
       pageTitle,
       brandName,
@@ -313,9 +318,12 @@ module.exports = async function handler(req, res) {
       created,
       linked,
       ignored,
-    });
+    };
+
+    console.log("RESULT:", result);
+    return res.status(200).json(result);
   } catch (error) {
-    console.error(error);
+    console.error("ERROR:", error);
 
     return res.status(500).json({
       ok: false,
