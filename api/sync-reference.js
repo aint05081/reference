@@ -32,33 +32,81 @@ function getBrandName(page) {
   return null;
 }
 
-async function findVideoBlocks(blockId, videos = []) {
+function isVideoFileName(name = "") {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".webm");
+}
+
+async function findMediaBlocks(blockId, mediaBlocks = []) {
   const children = await notion.blocks.children.list({
     block_id: blockId,
     page_size: 100,
   });
 
   for (const block of children.results) {
-    if (block.type === "video") videos.push(block);
+    if (block.type === "video") {
+      mediaBlocks.push({
+        block,
+        kind: "video",
+      });
+    }
+
+    if (block.type === "file") {
+      const fileName = block.file?.name || "";
+
+      if (isVideoFileName(fileName)) {
+        mediaBlocks.push({
+          block,
+          kind: "file",
+        });
+      }
+    }
 
     if (block.has_children) {
-      await findVideoBlocks(block.id, videos);
+      await findMediaBlocks(block.id, mediaBlocks);
     }
   }
 
-  return videos;
+  return mediaBlocks;
 }
 
-function getVideoUrl(block) {
-  const video = block.video;
-  if (!video) return null;
+function getMediaUrl(media) {
+  const { block, kind } = media;
 
-  if (video.type === "file" && video.file?.url) {
-    return video.file.url;
+  console.log("MEDIA DEBUG:", {
+    id: block.id,
+    kind,
+    type: block.type,
+    video: block.video || null,
+    file: block.file || null,
+  });
+
+  if (block.type === "video") {
+    const video = block.video;
+
+    if (video?.type === "file" && video.file?.url) {
+      return video.file.url;
+    }
+
+    if (video?.type === "external" && video.external?.url) {
+      return video.external.url;
+    }
+
+    return null;
   }
 
-  if (video.type === "external" && video.external?.url) {
-    return video.external.url;
+  if (block.type === "file") {
+    const file = block.file;
+
+    if (file?.type === "file" && file.file?.url) {
+      return file.file.url;
+    }
+
+    if (file?.type === "external" && file.external?.url) {
+      return file.external.url;
+    }
+
+    return null;
   }
 
   return null;
@@ -102,9 +150,7 @@ async function getNextReferenceNumber() {
   let maxNumber = 0;
 
   for (const page of result.results) {
-    const title =
-      page.properties[REF_TITLE_PROP]?.title?.[0]?.plain_text || "";
-
+    const title = page.properties[REF_TITLE_PROP]?.title?.[0]?.plain_text || "";
     const num = parseInt(title, 10);
 
     if (!Number.isNaN(num)) {
@@ -174,12 +220,7 @@ async function createFileUpload({ filename, contentType, buffer }) {
   return upload.id;
 }
 
-async function createReferencePage({
-  title,
-  hash,
-  brandName,
-  contentPageId,
-}) {
+async function createReferencePage({ title, hash, brandName, contentPageId }) {
   const properties = {
     [REF_TITLE_PROP]: {
       title: [{ text: { content: title } }],
@@ -235,8 +276,6 @@ module.exports = async function handler(req, res) {
       req.body.data?.id;
 
     if (!pageId) {
-      console.log("NO PAGE ID BODY:", JSON.stringify(req.body, null, 2));
-
       return res.status(200).json({
         ok: false,
         error: "pageId 없음",
@@ -260,15 +299,15 @@ module.exports = async function handler(req, res) {
 
     const pageTitle = getTitle(page);
     const brandName = getBrandName(page);
-    const videos = await findVideoBlocks(pageId);
+    const mediaBlocks = await findMediaBlocks(pageId);
 
     let created = 0;
     let linked = 0;
     let ignored = 0;
     let nextNumber = await getNextReferenceNumber();
 
-    for (const videoBlock of videos) {
-      const url = getVideoUrl(videoBlock);
+    for (const media of mediaBlocks) {
+      const url = getMediaUrl(media);
 
       if (!url) {
         ignored++;
@@ -314,7 +353,7 @@ module.exports = async function handler(req, res) {
       ok: true,
       pageTitle,
       brandName,
-      totalVideos: videos.length,
+      totalMediaBlocks: mediaBlocks.length,
       created,
       linked,
       ignored,
