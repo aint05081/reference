@@ -12,6 +12,9 @@ const REF_TITLE_PROP = "이름";
 const REF_RELATION_PROP = "🧸 광고 소재";
 const REF_SELECT_PROP = "선택";
 const REF_HASH_PROP = "Hash";
+const REF_TYPE_PROP = "종류";
+const REF_POSTED_DATE_PROP = "게시 일자";
+const REF_SELECTED_DATE_PROP = "선정 일자";
 
 function pad(num) {
   return String(num).padStart(2, "0");
@@ -37,29 +40,83 @@ function isVideoFileName(name = "") {
   return lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".webm");
 }
 
-async function findMediaBlocks(blockId, mediaBlocks = []) {
-  const children = await notion.blocks.children.list({
-    block_id: blockId,
-    page_size: 100,
-  });
+function isImageFileName(name = "") {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".gif");
+}
 
-  for (const block of children.results) {
+function getPlainText(block) {
+  const type = block.type;
+  const richText = block[type]?.rich_text || [];
+  return richText.map((t) => t.plain_text).join("");
+}
+
+function parseDates(text) {
+  const postedMatch = text.match(/게시\s*일자\s*:\s*(\d{4}-\d{2}-\d{2})/);
+  const selectedMatch = text.match(/선정\s*일자\s*:\s*(\d{4}-\d{2}-\d{2})/);
+
+  return {
+    postedDate: postedMatch?.[1] || null,
+    selectedDate: selectedMatch?.[1] || null,
+  };
+}
+
+async function getChildren(blockId) {
+  const results = [];
+  let cursor;
+
+  do {
+    const response = await notion.blocks.children.list({
+      block_id: blockId,
+      page_size: 100,
+      start_cursor: cursor,
+    });
+
+    results.push(...response.results);
+    cursor = response.has_more ? response.next_cursor : undefined;
+  } while (cursor);
+
+  return results;
+}
+
+async function findMediaBlocks(blockId, mediaBlocks = []) {
+  const children = await getChildren(blockId);
+
+  for (let i = 0; i < children.length; i++) {
+    const block = children[i];
+    const nextBlock = children[i + 1];
+
+    let kind = null;
+
     if (block.type === "video") {
-      mediaBlocks.push({
-        block,
-        kind: "video",
-      });
+      kind = "video";
+    }
+
+    if (block.type === "image") {
+      kind = "image";
     }
 
     if (block.type === "file") {
       const fileName = block.file?.name || "";
 
-      if (isVideoFileName(fileName)) {
-        mediaBlocks.push({
-          block,
-          kind: "file",
-        });
-      }
+      if (isVideoFileName(fileName)) kind = "video-file";
+      if (isImageFileName(fileName)) kind = "image-file";
+    }
+
+    if (kind) {
+      const nextText =
+        nextBlock && nextBlock.type === "paragraph"
+          ? getPlainText(nextBlock)
+          : "";
+
+      const dates = parseDates(nextText);
+
+      mediaBlocks.push({
+        block,
+        kind,
+        postedDate: dates.postedDate,
+        selectedDate: dates.selectedDate,
+      });
     }
 
     if (block.has_children) {
@@ -71,45 +128,40 @@ async function findMediaBlocks(blockId, mediaBlocks = []) {
 }
 
 function getMediaUrl(media) {
-  const { block, kind } = media;
-
-  console.log("MEDIA DEBUG:", {
-    id: block.id,
-    kind,
-    type: block.type,
-    video: block.video || null,
-    file: block.file || null,
-  });
+  const { block } = media;
 
   if (block.type === "video") {
     const video = block.video;
 
-    if (video?.type === "file" && video.file?.url) {
-      return video.file.url;
-    }
+    if (video?.type === "file" && video.file?.url) return video.file.url;
+    if (video?.type === "external" && video.external?.url) return video.external.url;
+  }
 
-    if (video?.type === "external" && video.external?.url) {
-      return video.external.url;
-    }
+  if (block.type === "image") {
+    const image = block.image;
 
-    return null;
+    if (image?.type === "file" && image.file?.url) return image.file.url;
+    if (image?.type === "external" && image.external?.url) return image.external.url;
   }
 
   if (block.type === "file") {
     const file = block.file;
 
-    if (file?.type === "file" && file.file?.url) {
-      return file.file.url;
-    }
-
-    if (file?.type === "external" && file.external?.url) {
-      return file.external.url;
-    }
-
-    return null;
+    if (file?.type === "file" && file.file?.url) return file.file.url;
+    if (file?.type === "external" && file.external?.url) return file.external.url;
   }
 
   return null;
+}
+
+function getContentType(media) {
+  if (media.kind.includes("image")) return "image/png";
+  return "video/mp4";
+}
+
+function getExtension(media) {
+  if (media.kind.includes("image")) return "png";
+  return "mp4";
 }
 
 async function downloadBuffer(url) {
@@ -220,7 +272,14 @@ async function createFileUpload({ filename, contentType, buffer }) {
   return upload.id;
 }
 
-async function createReferencePage({ title, hash, brandName, contentPageId }) {
+async function createReferencePage({
+  title,
+  hash,
+  brandName,
+  contentPageId,
+  postedDate,
+  selectedDate,
+}) {
   const properties = {
     [REF_TITLE_PROP]: {
       title: [{ text: { content: title } }],
@@ -231,11 +290,26 @@ async function createReferencePage({ title, hash, brandName, contentPageId }) {
     [REF_HASH_PROP]: {
       rich_text: [{ text: { content: hash } }],
     },
+    [REF_TYPE_PROP]: {
+      select: { name: "레퍼런스" },
+    },
   };
 
   if (brandName) {
     properties[REF_SELECT_PROP] = {
       select: { name: brandName },
+    };
+  }
+
+  if (postedDate) {
+    properties[REF_POSTED_DATE_PROP] = {
+      date: { start: postedDate },
+    };
+  }
+
+  if (selectedDate) {
+    properties[REF_SELECTED_DATE_PROP] = {
+      date: { start: selectedDate },
     };
   }
 
@@ -245,20 +319,29 @@ async function createReferencePage({ title, hash, brandName, contentPageId }) {
   });
 }
 
-async function appendVideoToReferencePage({ referencePageId, fileUploadId }) {
+async function appendMediaToReferencePage({ referencePageId, fileUploadId, kind }) {
+  const isImage = kind.includes("image");
+
   await notion.blocks.children.append({
     block_id: referencePageId,
     children: [
-      {
-        object: "block",
-        type: "video",
-        video: {
-          type: "file_upload",
-          file_upload: {
-            id: fileUploadId,
+      isImage
+        ? {
+            object: "block",
+            type: "image",
+            image: {
+              type: "file_upload",
+              file_upload: { id: fileUploadId },
+            },
+          }
+        : {
+            object: "block",
+            type: "video",
+            video: {
+              type: "file_upload",
+              file_upload: { id: fileUploadId },
+            },
           },
-        },
-      },
     ],
   });
 }
@@ -333,17 +416,23 @@ module.exports = async function handler(req, res) {
         hash,
         brandName,
         contentPageId: pageId,
+        postedDate: media.postedDate,
+        selectedDate: media.selectedDate,
       });
 
+      const extension = getExtension(media);
+      const contentType = getContentType(media);
+
       const fileUploadId = await createFileUpload({
-        filename: `${title}.mp4`,
-        contentType: "video/mp4",
+        filename: `${title}.${extension}`,
+        contentType,
         buffer,
       });
 
-      await appendVideoToReferencePage({
+      await appendMediaToReferencePage({
         referencePageId: referencePage.id,
         fileUploadId,
+        kind: media.kind,
       });
 
       created++;
