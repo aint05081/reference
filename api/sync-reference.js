@@ -228,21 +228,19 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    console.log("REQUEST BODY:", JSON.stringify(req.body, null, 2));
+    const pageId =
+      req.body.pageId ||
+      req.body.id ||
+      req.body.page_id ||
+      req.body.data?.id;
 
-const pageId =
-  req.body.pageId ||
-  req.body.id ||
-  req.body.page_id ||
-  req.body["페이지 ID"];
-
-if (!pageId) {
-  return res.status(200).json({
-    ok: false,
-    error: "pageId 없음",
-    receivedBody: req.body,
-  });
-}
+    if (!pageId) {
+      return res.status(200).json({
+        ok: false,
+        error: "pageId 없음",
+        receivedBody: req.body,
+      });
+    }
 
     const page = await notion.pages.retrieve({ page_id: pageId });
     const status = page.properties[CONTENT_STATUS_PROP]?.status?.name;
@@ -324,4 +322,4 @@ if (!pageId) {
       error: error.message,
     });
   }
-}; 
+};
