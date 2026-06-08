@@ -37,27 +37,47 @@ function getBrandName(page) {
 
 function isVideoFileName(name = "") {
   const lower = name.toLowerCase();
-  return lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".webm");
+  return (
+    lower.endsWith(".mp4") ||
+    lower.endsWith(".mov") ||
+    lower.endsWith(".webm")
+  );
 }
 
 function isImageFileName(name = "") {
   const lower = name.toLowerCase();
-  return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".gif");
+  return (
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".png") ||
+    lower.endsWith(".webp") ||
+    lower.endsWith(".gif")
+  );
 }
 
 function getPlainText(block) {
   const type = block.type;
-  const richText = block[type]?.rich_text || [];
+
+  const richText =
+    block[type]?.rich_text ||
+    block[type]?.caption ||
+    [];
+
   return richText.map((t) => t.plain_text).join("");
 }
 
 function parseDates(text) {
-  const postedMatch = text.match(/게시\s*일자\s*:\s*(\d{4}-\d{2}-\d{2})/);
-  const selectedMatch = text.match(/선정\s*일자\s*:\s*(\d{4}-\d{2}-\d{2})/);
+  const postedMatch = text.match(
+    /게시\s*일자\s*:\s*(\d{4}[-.]\d{2}[-.]\d{2})/
+  );
+
+  const selectedMatch = text.match(
+    /선정\s*일자\s*:\s*(\d{4}[-.]\d{2}[-.]\d{2})/
+  );
 
   return {
-    postedDate: postedMatch?.[1] || null,
-    selectedDate: selectedMatch?.[1] || null,
+    postedDate: postedMatch?.[1]?.replace(/\./g, "-") || null,
+    selectedDate: selectedMatch?.[1]?.replace(/\./g, "-") || null,
   };
 }
 
@@ -84,7 +104,6 @@ async function findMediaBlocks(blockId, mediaBlocks = []) {
 
   for (let i = 0; i < children.length; i++) {
     const block = children[i];
-    const nextBlock = children[i + 1];
 
     let kind = null;
 
@@ -104,12 +123,12 @@ async function findMediaBlocks(blockId, mediaBlocks = []) {
     }
 
     if (kind) {
-      const nextText =
-        nextBlock && nextBlock.type === "paragraph"
-          ? getPlainText(nextBlock)
-          : "";
+      const nearbyText = children
+        .slice(i + 1, i + 4)
+        .map((b) => getPlainText(b))
+        .join("\n");
 
-      const dates = parseDates(nextText);
+      const dates = parseDates(nearbyText);
 
       mediaBlocks.push({
         block,
